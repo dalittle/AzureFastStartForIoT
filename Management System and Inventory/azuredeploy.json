@@ -1,0 +1,303 @@
+{
+  "$schema": "http://schema.management.azure.com/schemas/2015-01-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "iotHubName": {
+      "type": "string",
+      "minLength": 3,
+      "defaultValue": "hubbyblah99",
+      "metadata": {
+        "description": "Name of the IoT Hub instance to provision."
+      }
+    },
+    "namespaceName": {
+      "type": "string",
+      "defaultValue": "superslicknamespace56",
+      "metadata": {
+        "description": "Name of the EventHub namespace"
+      }
+    },
+    "eventHubName": {
+      "type": "string",
+      "defaultValue": "mymessages",
+      "metadata": {
+        "description": "Name of the Event Hub"
+      }
+    },
+    "streamAnalyticsJobName": {
+      "type": "string",
+      "defaultValue": "ProcessRFID",
+      "metadata": {
+        "description": "Name of the Stream Analytics Job"
+      }
+    },
+    "functionAppName": {
+      "type": "string",
+      "defaultValue": "RFiDProcessing",
+      "metadata": {
+        "description": "The name of the function app that you wish to create."
+      }
+    },
+    "sqlAdministratorLogin": {
+      "type": "string",
+      "defaultValue": "adminguy",
+      "metadata": {
+        "description": "The admin user of the SQL Server"
+      }
+    },
+    "sqlAdministratorLoginPassword": {
+      "type": "securestring",
+      "metadata": {
+        "description": "The password of the admin user of the SQL Server"
+      }
+    }
+
+  },
+  "variables": {
+    "apiVersion": "2016-02-03",
+    "authRuleResourceId": "[resourceId('Microsoft.Eventhub/namespaces/authorizationRules', parameters('namespaceName'), 'RootManageSharedAccessKey')]",
+    "skuName": "S1",
+    "capacityUnits": 1,
+    "d2cMessageRetentionInDaysPeriod": 1,
+    "d2cPartitionCount": 2,
+    "c2dMessagesTTLAsIso8601": "PT1H",
+    "c2dMessagesMaxDeliveryCount": 10,
+    "c2dFeebackMessagesTTLAsIso8601": "PT1H",
+    "c2dFeedbackMessagesMaxDeliveryCount": 10,
+    "c2dFeedbackMessagesLockDurationAsIso8601": "PT60S",
+    "d2cConsumerGroupName": "cg1",
+    "consumerGroupName": "consgroup",
+    "workerSize": "0",
+    "storageAccountType": "Standard_LRS",
+    "functionAppName": "[concat(parameters('functionAppName'),'-',uniqueString(resourceGroup().id))]",
+    "hostingPlanName": "[parameters('functionAppName')]",
+    "storageAccountName": "[concat(uniquestring(resourceGroup().id), 'functions')]",
+    "sqlserverName": "[concat('sqlserver', uniqueString(resourceGroup().id))]"
+  },
+  "resources": [
+    {
+      "apiVersion": "2016-02-03",
+      "location": "[resourceGroup().location]",
+      "name": "[parameters('iotHubName')]",
+      "type": "Microsoft.Devices/IotHubs",
+      "properties": {
+        "eventHubEndpoints": {
+          "events": {
+            "retentionTimeInDays": "[variables('d2cMessageRetentionInDaysPeriod')]",
+            "partitionCount": "[variables('d2cPartitionCount')]"
+          }
+        },
+        "cloudToDevice": {
+          "defaultTtlAsIso8601": "[variables('c2dMessagesTTLAsIso8601')]",
+          "maxDeliveryCount": "[variables('c2dMessagesMaxDeliveryCount')]",
+          "feedback": {
+            "maxDeliveryCount": "[variables('c2dFeedbackMessagesMaxDeliveryCount')]",
+            "ttlAsIso8601": "[variables('c2dFeebackMessagesTTLAsIso8601')]",
+            "lockDurationAsIso8601": "[variables('c2dFeedbackMessagesLockDurationAsIso8601')]"
+          }
+        },
+        "location": "[resourceGroup().location]"
+      },
+      "sku": {
+        "name": "[variables('skuName')]",
+        "capacity": "[variables('capacityUnits')]"
+      }
+    },
+    {
+      "apiVersion": "2016-02-03",
+      "dependsOn": [
+        "[concat('Microsoft.Devices/iothubs/', parameters('iotHubName'))]"
+      ],
+      "name": "[concat(parameters('iotHubName'), '/events/',variables('d2cConsumerGroupName'))]",
+      "type": "Microsoft.Devices/iotHubs/eventhubEndpoints/ConsumerGroups"
+    },
+
+    {
+      "apiVersion": "2015-08-01",
+      "name": "[parameters('namespaceName')]",
+      "type": "Microsoft.EventHub/namespaces",
+      "location": "[resourceGroup().location]",
+      "sku": {
+        "name": "Standard",
+        "tier": "Standard"
+      },
+      "resources": [
+        {
+          "apiVersion": "2015-08-01",
+          "name": "[parameters('eventHubName')]",
+          "type": "eventhubs",
+          "dependsOn": [
+            "[concat('Microsoft.EventHub/namespaces/', parameters('namespaceName'))]"
+          ],
+          "properties": {
+            "path": "[parameters('eventHubName')]"
+          },
+          "resources": [
+            {
+              "apiVersion": "2015-08-01",
+              "name": "[variables('consumerGroupName')]",
+              "type": "consumergroups",
+              "dependsOn": [
+                "[parameters('eventHubName')]"
+              ],
+              "properties": {
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "apiVersion": "2016-03-01",
+      "name": "[parameters('streamAnalyticsJobName')]",
+      "location": "[resourceGroup().location]",
+      "type": "Microsoft.StreamAnalytics/StreamingJobs",
+      "dependsOn": [
+        "[concat('Microsoft.EventHub/namespaces/', parameters('namespaceName'), '/eventhubs/',parameters('eventHubName'))]",
+        "[concat('Microsoft.Devices/IotHubs/', parameters('iotHubName'))]"
+      ],
+
+
+      "properties": {
+        "sku": {
+          "name": "standard"
+        },
+        "outputErrorPolicy": "stop",
+        "eventsOutOfOrderPolicy": "adjust",
+        "eventsOutOfOrderMaxDelayInSeconds": 0,
+        "eventsLateArrivalMaxDelayInSeconds": 5,
+        "dataLocale": "en-US",
+        "transformation": {
+          "name": "Transformation",
+          "properties": {
+            "streamingUnits": 1,
+            "query": "SELECT\r\n    *\r\nINTO\r\n    [IoTHub]\r\nFROM\r\n    [EHOutput]"
+          }
+        },
+        "outputs": [
+          {
+            "name": "EHOut",
+            "properties": {
+              "serialization": {
+                "type": "JSON",
+                "properties": {
+                  "encoding": "UTF8"
+                }
+              },
+              "datasource": {
+                "type": "Microsoft.ServiceBus/EventHub",
+                "properties": {
+                  "serviceBusNamespace": "[parameters('namespaceName')]",
+                  "sharedAccessPolicyName": "RootManageSharedAccessKey",
+                  "sharedAccessPolicyKey": "[listkeys(variables('authRuleResourceId'), '2015-08-01').primaryKey]",
+                  "eventHubName": "[parameters('eventHubName')]"
+                }
+              }
+            }
+          }
+        ]
+      }
+
+
+
+    },
+
+    {
+      "name": "[variables('sqlserverName')]",
+      "type": "Microsoft.Sql/servers",
+      "location": "[resourceGroup().location]",
+      "tags": {
+        "displayName": "SqlServer"
+      },
+      "apiVersion": "2014-04-01",
+      "properties": {
+        "administratorLogin": "[parameters('sqlAdministratorLogin')]",
+        "administratorLoginPassword": "[parameters('sqlAdministratorLoginPassword')]",
+        "version": "12.0"
+      },
+      "resources": [
+        {
+          "type": "firewallrules",
+          "apiVersion": "2014-04-01",
+          "dependsOn": [
+            "[variables('sqlserverName')]"
+          ],
+          "location": "[resourceGroup().location]",
+          "name": "AllowAllWindowsAzureIps",
+          "properties": {
+            "endIpAddress": "0.0.0.0",
+            "startIpAddress": "0.0.0.0"
+          }
+        }
+      ]
+    },
+
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "name": "[variables('storageAccountName')]",
+      "apiVersion": "2015-06-15",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "accountType": "[variables('storageAccountType')]"
+      }
+    },
+    {
+      "type": "Microsoft.Web/serverfarms",
+      "apiVersion": "2015-04-01",
+      "name": "[variables('hostingPlanName')]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "name": "[variables('hostingPlanName')]",
+        "sku": "Standard",
+        "workerSize": "[variables('workerSize')]",
+        "hostingEnvironment": "",
+        "numberOfWorkers": 1
+      }
+    },
+    {
+      "apiVersion": "2015-04-01",
+      "type": "Microsoft.Web/sites",
+      "name": "[variables('functionAppName')]",
+      "location": "[resourceGroup().location]",
+      "kind": "functionapp",
+      "properties": {
+        "name": "[variables('functionAppName')]",
+        "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "hostingEnvironment": "",
+        "clientAffinityEnabled": false,
+        "alwaysOn": true
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', variables('hostingPlanName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ],
+      "resources": [
+        {
+          "apiVersion": "2016-03-01",
+          "name": "appsettings",
+          "type": "config",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', variables('functionAppName'))]",
+            "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+          ],
+          "properties": {
+            "AzureWebJobsStorage": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storageAccountName'),';AccountKey=',listkeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2015-05-01-preview').key1,';')]",
+            "AzureWebJobsDashboard": "[concat('DefaultEndpointsProtocol=https;AccountName=',variables('storageAccountName'),';AccountKey=',listkeys(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2015-05-01-preview').key1,';')]",
+            "FUNCTIONS_EXTENSION_VERSION": "~1"
+
+          }
+        }
+      ]
+    }
+
+
+
+  ],
+  "outputs": {
+    "EventHubKey": {
+      "type": "string",
+      "value": "[listkeys(variables('authRuleResourceId'), '2015-08-01').primaryKey]"
+    }
+  }
+}
