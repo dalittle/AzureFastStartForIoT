@@ -108,7 +108,7 @@
         },
         "outputs": [
           {
-            "name": "PBI",
+            "name": "BIOut",
             "properties": {
               "dataSource": {
                 "type": "PowerBI",
